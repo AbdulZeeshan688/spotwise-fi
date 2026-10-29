@@ -1,5 +1,5 @@
 # Common commands. Run `make <target>`.
-.PHONY: install db migrate api test lint format typecheck check daily backfill
+.PHONY: install db migrate api test lint format typecheck check daily backfill quality
 
 install:     ## install Python dependencies
 	uv sync
@@ -34,3 +34,6 @@ daily:       ## ingest today + tomorrow
 
 backfill:    ## ingest history, e.g. `make backfill DAYS=30`
 	uv run python -m spotwise.ingest.cli backfill --days $(or $(DAYS),30)
+
+quality:     ## run data-quality checks, e.g. `make quality DAYS=30`
+	uv run python -m spotwise.ingest.cli quality --days $(or $(DAYS),1)

@@ -1,7 +1,7 @@
 """Health check endpoint (API-01)."""
 
 import logging
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel
@@ -25,7 +25,7 @@ def get_db_check() -> bool:
 
 
 @router.get("/health", response_model=HealthResponse)
-def health(response: Response, db_ok: bool = Depends(get_db_check)) -> HealthResponse:
+def health(response: Response, db_ok: Annotated[bool, Depends(get_db_check)]) -> HealthResponse:
     """Return 200 when the DB is reachable, 503 otherwise."""
     if db_ok:
         return HealthResponse(status="ok", db="ok")
