@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from spotwise.ingest.sources.base import PriceSlot
+from spotwise.prices.slot import PriceSlot
 from spotwise.quality.checks import (
     check_completeness,
     check_duplicates,

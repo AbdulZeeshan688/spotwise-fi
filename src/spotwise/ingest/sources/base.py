@@ -3,26 +3,19 @@
 import logging
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
 from typing import Protocol
 
 import httpx
+
+from spotwise.prices.slot import PriceSlot
+
+__all__ = ["PriceSlot", "Source", "SourceError", "get_with_retry"]
 
 logger = logging.getLogger(__name__)
 
 # Status codes worth retrying: rate limiting and temporary server problems.
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
-
-
-@dataclass(frozen=True)
-class PriceSlot:
-    """One normalised price: UTC start, slot length in minutes, €/MWh excluding VAT."""
-
-    ts_start: datetime
-    resolution_minutes: int
-    price_eur_mwh: Decimal
 
 
 class SourceError(Exception):

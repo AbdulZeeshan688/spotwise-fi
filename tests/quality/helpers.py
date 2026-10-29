@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from spotwise.ingest.sources.base import PriceSlot
+from spotwise.prices.slot import PriceSlot
 from spotwise.timeutils import iter_market_slots, local_day_bounds_utc
 
 HEL = ZoneInfo("Europe/Helsinki")

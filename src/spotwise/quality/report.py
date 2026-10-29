@@ -10,8 +10,9 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from spotwise.db.models import Price, QualityResult
-from spotwise.ingest.sources.base import PriceSlot
+from spotwise.db.models import QualityResult
+from spotwise.db.queries import load_slots
+from spotwise.prices.slot import PriceSlot
 from spotwise.quality.checks import (
     CheckResult,
     Status,
@@ -28,16 +29,6 @@ logger = logging.getLogger(__name__)
 
 SPIKE_HISTORY_DAYS = 30
 Colour = Literal["green", "yellow", "red", "unknown"]
-
-
-def load_slots(session: Session, area: str, start: datetime, end: datetime) -> list[PriceSlot]:
-    """All stored price rows for an area with ts_start in [start, end)."""
-    rows = session.execute(
-        select(Price.ts_start, Price.resolution_minutes, Price.price_eur_mwh)
-        .where(Price.area == area, Price.ts_start >= start, Price.ts_start < end)
-        .order_by(Price.ts_start)
-    ).all()
-    return [PriceSlot(ts.astimezone(UTC), res, price) for ts, res, price in rows]
 
 
 def run_quality_checks(

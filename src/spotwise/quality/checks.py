@@ -12,7 +12,7 @@ from statistics import median
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from spotwise.ingest.sources.base import PriceSlot
+from spotwise.prices.slot import PriceSlot
 from spotwise.timeutils import expected_slot_count, local_day_bounds_utc, resolution_for_day
 
 Status = Literal["pass", "info", "warn", "fail"]
