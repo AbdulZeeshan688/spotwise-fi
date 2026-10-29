@@ -1,0 +1,40 @@
+name: Daily ingest
+
+on:
+  schedule:
+    # GitHub cron is UTC. Prices are published around 14:00 Finnish time
+    # (12:00 UTC in winter, 11:00 UTC in summer). Run at 12:30 UTC, and again
+    # at 14:30 UTC as a retry; re-running is safe because ingestion is idempotent.
+    - cron: "30 12 * * *"
+    - cron: "30 14 * * *"
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      ENTSOE_TOKEN: ${{ secrets.ENTSOE_TOKEN }}  # empty → porssisahko.net fallback
+    steps:
+      - name: Check DATABASE_URL secret
+        id: guard
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::warning::DATABASE_URL secret is not set (production DB comes in Phase 8). Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.skip != 'true'
+      - uses: astral-sh/setup-uv@v6
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          enable-cache: true
+      - name: Install
+        if: steps.guard.outputs.skip != 'true'
+        run: uv sync --locked --no-dev
+      - name: Migrate
+        if: steps.guard.outputs.skip != 'true'
+        run: uv run alembic upgrade head
+      - name: Ingest today and tomorrow
+        if: steps.guard.outputs.skip != 'true'
+        run: uv run python -m spotwise.ingest.cli daily
