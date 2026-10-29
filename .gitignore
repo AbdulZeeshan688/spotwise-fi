@@ -1,0 +1,24 @@
+# secrets
+.env
+.env.*
+!.env.example
+web/.env
+web/.env.*
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+# node
+node_modules/
+web/dist/
+# os / editor
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+# eval outputs (keep reports, ignore raw dumps)
+evals/runs/
