@@ -5,7 +5,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from spotwise.api.routes import health, prices, quality
+from spotwise.api.routes import chat, health, prices, quality
 from spotwise.config import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -23,6 +23,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(quality.router)
     app.include_router(prices.router)
+    app.include_router(chat.router)
     return app
 
 

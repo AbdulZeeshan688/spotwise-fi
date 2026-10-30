@@ -25,7 +25,6 @@ class Settings(BaseSettings):
     # LLM (agent + judge)
     anthropic_api_key: SecretStr | None = None
     llm_model: str | None = None
-    llm_temperature: float = 0.0
     judge_model: str | None = None
 
     # Tracing (off when keys are missing)

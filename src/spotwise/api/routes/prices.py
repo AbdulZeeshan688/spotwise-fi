@@ -14,7 +14,7 @@ from spotwise.db.queries import load_slots
 from spotwise.db.session import get_session
 from spotwise.prices.slot import PriceSlot
 from spotwise.prices.stats import hourly_averages
-from spotwise.prices.units import consumer_price_c_kwh, round_price
+from spotwise.prices.units import consumer_price_c_kwh, round_price, to_consumer_slots
 from spotwise.prices.windows import cheapest_window
 from spotwise.timeutils import (
     expected_slot_count,
@@ -150,22 +150,22 @@ def get_cheapest_window(
         raise HTTPException(404, f"No prices stored for {day}.")
 
     duration = round(hours * 60)
+    vat_rate = Decimal(str(settings.vat_rate))
+    # Rank windows by the consumer price (VAT applies only to positive prices)
+    consumer_slots = to_consumer_slots(slots, vat, vat_rate)
     try:
-        window = cheapest_window(slots, duration, start, end)
+        window = cheapest_window(consumer_slots, duration, start, end)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     if window is None:
         raise HTTPException(404, f"No continuous {hours:g} h window in the data for {day}.")
 
-    vat_rate = Decimal(str(settings.vat_rate))
-    # Average of the consumer prices, so VAT is applied per slot like everywhere else
-    prices = [consumer_price_c_kwh(s.price_eur_mwh, vat, vat_rate) for s in window.slots]
     return CheapestWindowOut(
         date=day,
         duration_minutes=duration,
         start=window.start.astimezone(tz),
         end=window.end.astimezone(tz),
-        average_price_c_kwh=round_price(sum(prices, Decimal(0)) / len(prices)),
+        average_price_c_kwh=round_price(window.mean_price_eur_mwh),  # c/kWh here
         vat_included=vat,
         vat_rate=vat_rate,
         data_complete=data_complete,
