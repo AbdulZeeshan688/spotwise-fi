@@ -40,3 +40,33 @@ jobs:
         run: uv run alembic upgrade head
       - name: Test
         run: uv run pytest
+      - name: Evals (rule agent, free; fails if accuracy drops below the gate)
+        env:
+          EVAL_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/spotwise_eval
+        run: uv run python -m evals.runner --suite golden --agent rules --no-judge
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: eval-report
+          path: evals/reports/
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Test
+        run: npm test
+      - name: Type check + build
+        run: npm run build

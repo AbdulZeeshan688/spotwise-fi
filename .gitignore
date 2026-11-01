@@ -4,6 +4,7 @@
 !.env.example
 web/.env
 web/.env.*
+!web/.env.example
 # python
 __pycache__/
 *.pyc
