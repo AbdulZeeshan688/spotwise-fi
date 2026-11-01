@@ -4,7 +4,7 @@ from datetime import datetime
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,6 +43,19 @@ class Settings(BaseSettings):
     # Evals
     eval_now: datetime | None = None
     eval_database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/spotwise_eval"
+
+    @field_validator("database_url", "eval_database_url")
+    @classmethod
+    def _use_psycopg_driver(cls, url: str) -> str:
+        """Accept URLs as hosting providers show them (Neon: postgresql://...).
+
+        SQLAlchemy would pick the psycopg2 driver for a plain postgresql:// URL; we use
+        psycopg 3, so the driver name is added here instead of asking you to edit it.
+        """
+        for prefix in ("postgresql://", "postgres://"):
+            if url.startswith(prefix):
+                return "postgresql+psycopg://" + url.removeprefix(prefix)
+        return url
 
     @property
     def cors_origin_list(self) -> list[str]:

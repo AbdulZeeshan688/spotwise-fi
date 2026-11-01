@@ -17,6 +17,20 @@ function useNow(): Date {
   return now
 }
 
+/** True once `active` has been true for `ms` (e.g. "loading is taking long"). */
+function useTakingLong(active: boolean, ms = 4000): boolean {
+  const [long, setLong] = useState(false)
+  useEffect(() => {
+    if (!active) return
+    const id = setTimeout(() => setLong(true), ms)
+    return () => {
+      clearTimeout(id)
+      setLong(false)
+    }
+  }, [active, ms])
+  return active && long
+}
+
 export default function App() {
   const now = useNow()
   const today = helsinkiDate(now)
@@ -62,6 +76,8 @@ export default function App() {
     [prices, now, windows],
   )
   const current = rows.find((r) => r.isCurrent)
+  // The free API host sleeps when idle; the first request can take up to a minute
+  const waking = useTakingLong(!prices && !error)
   const tomorrowPublished = rows.filter((r) => r.day === tomorrow).length > 4
 
   return (
@@ -117,7 +133,13 @@ export default function App() {
               Couldn't load prices: {error}
             </p>
           )}
-          {!error && !prices && <p className="notice">Loading prices…</p>}
+          {!error && !prices && (
+            <p className="notice" role="status">
+              {waking
+                ? 'Waking up the free server… this can take up to a minute the first time.'
+                : 'Loading prices…'}
+            </p>
+          )}
           {prices && rows.length === 0 && <p className="notice">No prices stored for today yet.</p>}
           {rows.length > 0 && <PriceChart rows={rows} vat={vat} />}
           {prices && !tomorrowPublished && (

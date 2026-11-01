@@ -1,0 +1,26 @@
+# Render Blueprint: the SpotWise API on Render's free plan (no credit card needed).
+# Render → New → Blueprint → pick this repo. It asks for the values marked sync: false.
+services:
+  - type: web
+    name: spotwise-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        sync: false # paste the Neon connection string
+      - key: CORS_ORIGINS
+        sync: false # your Netlify URL, e.g. https://spotwise-fi.netlify.app
+      - key: AGENT_MODE
+        value: rules # free rule-based chat, no API key
+      - key: PRICE_AREA
+        value: FI
+      - key: VAT_RATE
+        value: "0.255"
+      - key: TIMEZONE
+        value: Europe/Helsinki
+      - key: CHAT_RATE_LIMIT_PER_MIN
+        value: "20"

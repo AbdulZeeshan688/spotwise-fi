@@ -8,10 +8,16 @@ on:
     - cron: "30 12 * * *"
     - cron: "30 14 * * *"
   workflow_dispatch:
+    inputs:
+      backfill_days:
+        description: "Also load this many past days first (e.g. 14). Empty = only today + tomorrow."
+        required: false
+        default: ""
 
 jobs:
   ingest:
     runs-on: ubuntu-latest
+    timeout-minutes: 120  # a porssisahko backfill fetches one slot per request (slow)
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       ENTSOE_TOKEN: ${{ secrets.ENTSOE_TOKEN }}  # empty → porssisahko.net fallback
@@ -20,7 +26,7 @@ jobs:
         id: guard
         run: |
           if [ -z "$DATABASE_URL" ]; then
-            echo "::warning::DATABASE_URL secret is not set (production DB comes in Phase 8). Skipping."
+            echo "::warning::DATABASE_URL secret is not set (see docs/DEPLOY.md). Skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
       - uses: actions/checkout@v7
@@ -35,6 +41,15 @@ jobs:
       - name: Migrate
         if: steps.guard.outputs.skip != 'true'
         run: uv run alembic upgrade head
-      - name: Ingest today and tomorrow
+      - name: Backfill past days (manual runs only)
+        if: steps.guard.outputs.skip != 'true' && inputs.backfill_days != ''
+        # The input goes through an env var, never pasted into the script
+        env:
+          DAYS: ${{ inputs.backfill_days }}
+        run: |
+          case "$DAYS" in *[!0-9]*) echo "::error::backfill_days must be a number"; exit 1;; esac
+          uv run python -m spotwise.ingest.cli backfill --days "$DAYS"
+          uv run python -m spotwise.ingest.cli quality --days "$DAYS"
+      - name: Ingest today and tomorrow (+ quality checks)
         if: steps.guard.outputs.skip != 'true'
         run: uv run python -m spotwise.ingest.cli daily

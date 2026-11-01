@@ -70,3 +70,43 @@ jobs:
         run: npm test
       - name: Type check + build
         run: npm run build
+
+  docker:
+    # Build the production image (the one Render runs) and smoke-test it
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: spotwise
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build image
+        run: docker build -t spotwise-api .
+      - name: Start container (plain postgresql:// URL, like Neon gives you)
+        run: |
+          docker run -d --name api --network host \
+            -e DATABASE_URL=postgresql://postgres:postgres@localhost:5432/spotwise \
+            -e PORT=8000 spotwise-api
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf localhost:8000/health && break
+            sleep 2
+          done
+          curl -sf localhost:8000/health | grep '"db":"ok"'
+          curl -sf "localhost:8000/prices?from=2025-11-01&to=2025-11-02" | grep '"count":0'
+          curl -sf -X POST localhost:8000/chat -H 'content-type: application/json' \
+            -d '{"message":"Who won the football match?"}' | grep 'event: done'
+      - name: Container logs
+        if: always()
+        run: docker logs api

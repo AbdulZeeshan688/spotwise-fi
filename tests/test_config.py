@@ -32,3 +32,21 @@ def test_secrets_are_hidden_in_repr(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-very-secret")
     settings = Settings(_env_file=None)
     assert "sk-very-secret" not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://u:p@ep-x.eu-central-1.aws.neon.tech/neondb?sslmode=require",
+        "postgres://u:p@ep-x.eu-central-1.aws.neon.tech/neondb?sslmode=require",
+        "postgresql+psycopg://u:p@ep-x.eu-central-1.aws.neon.tech/neondb?sslmode=require",
+    ],
+)
+def test_database_url_from_neon_gets_psycopg_driver(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", url)
+    settings = Settings(_env_file=None)
+    assert settings.database_url == (
+        "postgresql+psycopg://u:p@ep-x.eu-central-1.aws.neon.tech/neondb?sslmode=require"
+    )
