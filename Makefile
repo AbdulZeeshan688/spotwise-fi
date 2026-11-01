@@ -1,5 +1,5 @@
 # Common commands. Run `make <target>`.
-.PHONY: install db migrate api test lint format typecheck check daily backfill quality
+.PHONY: install db migrate api test lint format typecheck check daily backfill quality eval-load eval-check eval
 
 install:     ## install Python dependencies
 	uv sync
@@ -37,3 +37,12 @@ backfill:    ## ingest history, e.g. `make backfill DAYS=30`
 
 quality:     ## run data-quality checks, e.g. `make quality DAYS=30`
 	uv run python -m spotwise.ingest.cli quality --days $(or $(DAYS),1)
+
+eval-load:   ## (re)load the frozen fixture into the eval database
+	uv run python -m evals.fixtures.loader
+
+eval-check:  ## validate the golden set and ground truth (no LLM, free)
+	uv run python -m evals.runner --check
+
+eval:        ## full eval run with the real LLM (costs money), e.g. `make eval LIMIT=5`
+	uv run python -m evals.runner --suite golden $(if $(LIMIT),--limit $(LIMIT),)

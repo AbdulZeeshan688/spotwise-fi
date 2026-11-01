@@ -1,7 +1,7 @@
 """A scripted chat model: replays prepared AIMessages, streaming them like a real LLM."""
 
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
@@ -16,10 +16,15 @@ def tool_call(name: str, call_id: str = "call_1", **args: Any) -> AIMessage:
     return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": call_id}])
 
 
+# A response is a fixed AIMessage, or a function that builds one from the conversation
+# (e.g. to quote the last tool result, like a well-behaved model would).
+Response = AIMessage | Callable[[list[BaseMessage]], AIMessage]
+
+
 class ScriptedChatModel(BaseChatModel):
     """Returns `responses` in order; records the messages it was called with."""
 
-    responses: list[AIMessage]
+    responses: list[Any]  # Response items; Any so pydantic doesn't coerce functions
     calls: list[list[BaseMessage]] = []
 
     @property
@@ -33,7 +38,8 @@ class ScriptedChatModel(BaseChatModel):
         self.calls.append(messages)
         if not self.responses:
             raise AssertionError("ScriptedChatModel ran out of responses")
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        return response if isinstance(response, AIMessage) else response(messages)
 
     def _generate(
         self,

@@ -3,8 +3,7 @@
 import logging
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
-from functools import lru_cache
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import (
@@ -17,13 +16,8 @@ from langchain_core.messages import (
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
-from spotwise.agent.graph import build_graph, build_llm
 from spotwise.agent.guardrails import find_unsupported_numbers
 from spotwise.agent.memory import SessionMemory
-from spotwise.agent.tracing import tracing_callbacks
-from spotwise.config import get_settings
-from spotwise.tools.price_tools import ToolContext
-from spotwise.tools.registry import build_tools
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +30,8 @@ class TurnResult:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)  # name + args
     tool_outputs: list[str] = field(default_factory=list)
     unsupported_numbers: list[str] = field(default_factory=list)
+    input_tokens: int = 0
+    output_tokens: int = 0
 
     @property
     def tools_used(self) -> list[str]:
@@ -51,8 +47,16 @@ class ChatEvent:
     result: TurnResult | None = None
 
 
+class Agent(Protocol):
+    """What /chat and the eval runner need: the LLM agent and the rule agent both fit."""
+
+    def stream(self, session_id: str, question: str) -> AsyncIterator["ChatEvent"]: ...
+
+    async def ask(self, session_id: str, question: str) -> "TurnResult": ...
+
+
 class ChatAgent:
-    """The compiled graph plus session memory and tracing callbacks."""
+    """The LLM agent: compiled graph plus session memory and tracing callbacks."""
 
     def __init__(
         self,
@@ -133,18 +137,12 @@ def _turn_result(turn: Sequence[BaseMessage], question: str) -> TurnResult:
         for call in m.tool_calls
     ]
     tool_outputs = [message_text(m) for m in turn if isinstance(m, ToolMessage)]
+    usage = [m.usage_metadata for m in turn if isinstance(m, AIMessage) and m.usage_metadata]
     return TurnResult(
         answer=answer,
         tool_calls=tool_calls,
         tool_outputs=tool_outputs,
         unsupported_numbers=find_unsupported_numbers(answer, tool_outputs, question),
+        input_tokens=sum(u["input_tokens"] for u in usage),
+        output_tokens=sum(u["output_tokens"] for u in usage),
     )
-
-
-@lru_cache
-def get_chat_agent() -> ChatAgent:
-    """The app-wide agent, built on first use. Raises LLMNotConfiguredError without keys."""
-    settings = get_settings()
-    tools = build_tools(ToolContext.from_settings(settings))
-    graph = build_graph(build_llm(settings), tools)
-    return ChatAgent(graph, SessionMemory(), tracing_callbacks(settings))

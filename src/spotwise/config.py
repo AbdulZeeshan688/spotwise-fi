@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,7 +23,10 @@ class Settings(BaseSettings):
     vat_rate: float = 0.255
     timezone: str = "Europe/Helsinki"
 
-    # LLM (agent + judge)
+    # Agent: "rules" = free rule-based answers (default), "llm" = Claude via LangGraph
+    agent_mode: Literal["rules", "llm"] = "rules"
+
+    # LLM (only used when agent_mode = "llm", and by the optional eval judge)
     anthropic_api_key: SecretStr | None = None
     llm_model: str | None = None
     judge_model: str | None = None

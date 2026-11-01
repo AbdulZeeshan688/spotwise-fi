@@ -1,5 +1,7 @@
 # Phase 5 — Agent: summary
 
+> **Update 2026-11-01:** the default agent is now the free rule-based one (`AGENT_MODE=rules`, see `PHASE_6_SUMMARY.md`). Everything below still applies when `AGENT_MODE=llm`.
+
 Requirements: AGENT-01 … AGENT-07, API-05, API-06.
 
 ## What was built

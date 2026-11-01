@@ -41,9 +41,15 @@ TOOL_SPECS: list[tuple[Callable[..., BaseModel], type[BaseModel], str]] = [
     ),
     (
         t.get_price_stats,
+        t.StatsInput,
+        "Min and max (with times), mean, median and negative-price slots for a range; "
+        "with threshold_c_kwh also the hours above that price. Use for averages, "
+        "single cheapest/most expensive slots and negative prices.",
+    ),
+    (
+        t.get_daily_averages,
         t.RangeInput,
-        "Min and max (with times), mean, median and negative-price slots for a range. "
-        "Use for 'cheapest/most expensive hour', averages and negative prices.",
+        "Mean price per day in a range, plus the cheapest and most expensive day.",
     ),
     (
         t.compare_periods,
@@ -58,7 +64,14 @@ TOOL_SPECS: list[tuple[Callable[..., BaseModel], type[BaseModel], str]] = [
     (
         t.check_data_availability,
         t.AvailabilityInput,
-        "Whether a day's prices are published yet (default: tomorrow).",
+        "Whether a day's prices are published yet (default: tomorrow), and the first and "
+        "last date of all stored price data.",
+    ),
+    (
+        t.get_data_quality,
+        t.NoInput,
+        "Latest data-quality checks: overall colour and any missing, duplicate or "
+        "unusual prices per day.",
     ),
 ]
 

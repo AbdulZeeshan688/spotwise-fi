@@ -10,20 +10,22 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, cast
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
 from spotwise.config import Settings
-from spotwise.db.queries import load_slots
+from spotwise.db.queries import load_slots, price_range
 from spotwise.db.session import get_engine
 from spotwise.prices.slot import PriceSlot, clip, step_minutes, to_uniform_steps
+from spotwise.prices.stats import daily_means, hourly_averages, minutes_above, price_stats
 from spotwise.prices.stats import estimate_cost as estimate_cost_math
-from spotwise.prices.stats import hourly_averages, price_stats
 from spotwise.prices.units import consumer_price_c_kwh, round_price, to_consumer_slots
 from spotwise.prices.windows import cheapest_window, most_expensive_window
+from spotwise.quality.checks import Status
+from spotwise.quality.report import load_latest_results, overall_colour
 from spotwise.timeutils import (
     expected_slot_count,
     local_day_bounds_utc,
@@ -106,6 +108,12 @@ class WindowInput(RangeInput):
     )
 
 
+class StatsInput(RangeInput):
+    threshold_c_kwh: Decimal | None = Field(
+        None, description="Optional: also report how long the price was above this c/kWh"
+    )
+
+
 class CompareInput(BaseModel):
     a: RangeInput = Field(description="The reference period (e.g. last week)")
     b: RangeInput = Field(description="The period compared with it (e.g. this week)")
@@ -147,6 +155,7 @@ class PeriodOut(BaseModel):
     label: str
     start: datetime
     end: datetime
+    last_day: date = Field(description="Last Helsinki day in the range (inclusive)")
     timezone: str
 
 
@@ -210,6 +219,29 @@ class StatsOut(BaseModel):
     median_price_c_kwh: Decimal | None = None
     negative_slots: int = 0
     negative_slot_starts: list[datetime] = []
+    slot_minutes: int | None = None
+    threshold_c_kwh: Decimal | None = None
+    hours_above_threshold: Decimal | None = None
+    coverage: Coverage
+
+
+class DayMean(BaseModel):
+    day: date
+    mean_price_c_kwh: Decimal
+    complete: bool
+
+
+class DailyAveragesOut(BaseModel):
+    available: bool
+    message: str | None = None
+    start: datetime
+    end: datetime
+    unit: str = "c/kWh"
+    vat_included: bool
+    vat_percent: Decimal
+    days: list[DayMean] = []
+    cheapest_day: DayMean | None = None
+    most_expensive_day: DayMean | None = None
     coverage: Coverage
 
 
@@ -251,8 +283,24 @@ class AvailabilityOut(BaseModel):
     available_slots: int
     expected_slots: int
     checked_at: datetime
-    latest_price_end: datetime | None
+    earliest_price_start: datetime | None = Field(None, description="Start of all stored data")
+    latest_price_end: datetime | None = Field(None, description="End of all stored data")
     note: str
+
+
+class QualityIssue(BaseModel):
+    day: date
+    check: str
+    status: str
+    details: dict[str, object]
+
+
+class QualityOut(BaseModel):
+    available: bool
+    overall: str = Field(description="green, yellow, red or unknown")
+    checked_at: datetime | None = None
+    days_checked: list[date] = Field([], description="Days whose prices were checked")
+    issues: list[QualityIssue] = Field([], description="Everything that is not 'pass'")
 
 
 # --- tools ------------------------------------------------------------------
@@ -261,7 +309,13 @@ class AvailabilityOut(BaseModel):
 def resolve_period(ctx: ToolContext, inp: PeriodInput) -> PeriodOut:
     """Turn a phrase like 'tomorrow' into an exact Helsinki time range."""
     period = resolve_period_text(inp.period, ctx.now(), ctx.tz)
-    return PeriodOut(label=period.label, start=period.start, end=period.end, timezone=ctx.tz.key)
+    return PeriodOut(
+        label=period.label,
+        start=period.start,
+        end=period.end,
+        last_day=(period.end - timedelta(minutes=1)).date(),
+        timezone=ctx.tz.key,
+    )
 
 
 def get_current_price(ctx: ToolContext, inp: NoInput) -> CurrentPriceOut:
@@ -338,8 +392,8 @@ def find_most_expensive_window(ctx: ToolContext, inp: WindowInput) -> WindowOut:
     return _window(ctx, inp, "most_expensive")
 
 
-def get_price_stats(ctx: ToolContext, inp: RangeInput) -> StatsOut:
-    """Min/max (with times), mean, median and negative-price slots for a range."""
+def get_price_stats(ctx: ToolContext, inp: StatsInput) -> StatsOut:
+    """Min/max (with times), mean, median, negative slots, optional time above a threshold."""
     slots = _load(ctx, inp.start, inp.end)
     common = {
         "start": _local(ctx, inp.start),
@@ -348,9 +402,14 @@ def get_price_stats(ctx: ToolContext, inp: RangeInput) -> StatsOut:
         "vat_percent": _vat_percent(ctx),
         "coverage": _coverage(slots, inp.start, inp.end),
     }
-    stats = price_stats(to_consumer_slots(slots, inp.include_vat, ctx.vat_rate))
+    consumer = to_consumer_slots(slots, inp.include_vat, ctx.vat_rate)
+    stats = price_stats(consumer)
     if stats is None:
         return StatsOut(available=False, message=_no_data_message(ctx, inp.end), **common)
+    hours_above = None
+    if inp.threshold_c_kwh is not None:
+        steps = clip(to_uniform_steps(consumer, stats.step_minutes), inp.start, inp.end)
+        hours_above = (Decimal(minutes_above(steps, inp.threshold_c_kwh)) / 60).normalize()
     return StatsOut(
         available=True,
         min_price_c_kwh=round_price(stats.min_price_eur_mwh),
@@ -361,6 +420,41 @@ def get_price_stats(ctx: ToolContext, inp: RangeInput) -> StatsOut:
         median_price_c_kwh=round_price(stats.median_price_eur_mwh),
         negative_slots=stats.negative_steps,
         negative_slot_starts=[_local(ctx, ts) for ts in stats.negative_starts[:MAX_LISTED_TIMES]],
+        slot_minutes=stats.step_minutes,
+        threshold_c_kwh=inp.threshold_c_kwh,
+        hours_above_threshold=hours_above,
+        **common,
+    )
+
+
+def get_daily_averages(ctx: ToolContext, inp: RangeInput) -> DailyAveragesOut:
+    """Mean price per Helsinki day, plus the cheapest and most expensive day."""
+    slots = _load(ctx, inp.start, inp.end)
+    common = {
+        "start": _local(ctx, inp.start),
+        "end": _local(ctx, inp.end),
+        "vat_included": inp.include_vat,
+        "vat_percent": _vat_percent(ctx),
+        "coverage": _coverage(slots, inp.start, inp.end),
+    }
+    means = daily_means(to_consumer_slots(slots, inp.include_vat, ctx.vat_rate), ctx.tz)
+    if not means:
+        return DailyAveragesOut(available=False, message=_no_data_message(ctx, inp.end), **common)
+    days = [
+        DayMean(
+            day=m.day,
+            mean_price_c_kwh=round_price(m.mean_price_eur_mwh),
+            complete=m.step_count >= expected_slot_count(m.day, m.step_minutes, ctx.tz),
+        )
+        for m in means
+    ]
+    # Only complete days compete for cheapest / most expensive
+    complete = [d for d in days if d.complete] or days
+    return DailyAveragesOut(
+        available=True,
+        days=days,
+        cheapest_day=min(complete, key=lambda d: d.mean_price_c_kwh),
+        most_expensive_day=max(complete, key=lambda d: d.mean_price_c_kwh),
         **common,
     )
 
@@ -444,11 +538,15 @@ def check_data_availability(ctx: ToolContext, inp: AvailabilityInput) -> Availab
     expected = expected_slot_count(day, resolution, ctx.tz)
     available = len({s.ts_start for s in slots if s.resolution_minutes == resolution})
     published = available >= expected
-    latest = _latest_price_end(ctx)
+    with ctx.session_factory() as session:
+        stored = price_range(session, ctx.area)
+    earliest, latest = stored if stored else (None, None)
     if published:
         note = f"All prices for {day} are available."
     elif day > today:
         note = f"Prices for {day} are not published yet. {NOT_PUBLISHED_NOTE}"
+    elif available == 0:
+        note = f"No prices stored for {day}; see earliest_price_start and latest_price_end."
     else:
         note = f"Prices for {day} are incomplete in the database ({available}/{expected} slots)."
     return AvailabilityOut(
@@ -457,8 +555,30 @@ def check_data_availability(ctx: ToolContext, inp: AvailabilityInput) -> Availab
         available_slots=available,
         expected_slots=expected,
         checked_at=_local(ctx, now),
+        earliest_price_start=_local(ctx, earliest) if earliest else None,
         latest_price_end=_local(ctx, latest) if latest else None,
         note=note,
+    )
+
+
+def get_data_quality(ctx: ToolContext, inp: NoInput) -> QualityOut:
+    """Latest data-quality run: overall colour and every check that didn't pass."""
+    with ctx.session_factory() as session:
+        run_at, rows = load_latest_results(session)
+    if run_at is None:
+        return QualityOut(available=False, overall="unknown")
+    statuses = [cast(Status, r.status) for r in rows]  # stored as text in the DB
+    return QualityOut(
+        available=True,
+        overall=overall_colour(statuses),
+        checked_at=_local(ctx, run_at),
+        # Day-level checks only (staleness looks at tomorrow, which has no data yet)
+        days_checked=sorted({r.day for r in rows if r.check_name == "completeness"}),
+        issues=[
+            QualityIssue(day=r.day, check=r.check_name, status=r.status, details=r.details)
+            for r in rows
+            if r.status != "pass"
+        ],
     )
 
 
@@ -506,12 +626,6 @@ def _window(
 def _load(ctx: ToolContext, start: datetime, end: datetime) -> list[PriceSlot]:
     with ctx.session_factory() as session:
         return load_slots(session, ctx.area, start.astimezone(UTC), end.astimezone(UTC))
-
-
-def _latest_price_end(ctx: ToolContext) -> datetime | None:
-    now = ctx.now().astimezone(UTC)
-    slots = _load(ctx, now - timedelta(days=3), now + timedelta(days=3))
-    return max((s.end for s in slots), default=None)
 
 
 def _coverage(slots: list[PriceSlot], start: datetime, end: datetime) -> Coverage:

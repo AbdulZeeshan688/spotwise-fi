@@ -3,9 +3,10 @@
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from statistics import median
+from zoneinfo import ZoneInfo
 
 from spotwise.prices.slot import PriceSlot, clip, contiguous_runs, step_minutes, to_uniform_steps
 from spotwise.prices.units import apply_vat
@@ -138,3 +139,32 @@ def hourly_averages(slots: Sequence[PriceSlot]) -> list[PriceSlot]:
         PriceSlot(hour, 60, sum(prices, Decimal(0)) / len(prices))
         for hour, prices in sorted(by_hour.items())
     ]
+
+
+@dataclass(frozen=True)
+class DailyMean:
+    """Mean price of one local day and how many steps it is based on."""
+
+    day: date
+    mean_price_eur_mwh: Decimal
+    step_minutes: int
+    step_count: int
+
+
+def daily_means(slots: Sequence[PriceSlot], tz: ZoneInfo) -> list[DailyMean]:
+    """Time-weighted mean per local day (the timezone decides where a day starts)."""
+    if not slots:
+        return []
+    step = step_minutes(slots)
+    by_day: dict[date, list[Decimal]] = defaultdict(list)
+    for s in to_uniform_steps(slots, step):
+        by_day[s.ts_start.astimezone(tz).date()].append(s.price_eur_mwh)
+    return [
+        DailyMean(day, sum(prices, Decimal(0)) / len(prices), step, len(prices))
+        for day, prices in sorted(by_day.items())
+    ]
+
+
+def minutes_above(slots: Sequence[PriceSlot], threshold: Decimal) -> int:
+    """Total minutes with a price strictly above `threshold` (same unit as the slots)."""
+    return sum(s.resolution_minutes for s in slots if s.price_eur_mwh > threshold)

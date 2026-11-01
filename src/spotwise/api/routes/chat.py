@@ -18,9 +18,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field
 
+from spotwise.agent.factory import get_chat_agent as build_chat_agent
 from spotwise.agent.graph import LLMNotConfiguredError
-from spotwise.agent.runner import ChatAgent
-from spotwise.agent.runner import get_chat_agent as build_chat_agent
+from spotwise.agent.runner import Agent
 from spotwise.api.ratelimit import enforce_chat_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = Field(None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
 
 
-def get_chat_agent() -> ChatAgent:
+def get_chat_agent() -> Agent:
     """Dependency: the agent, or 503 if the LLM isn't configured."""
     try:
         return build_chat_agent()
@@ -48,7 +48,7 @@ def get_chat_agent() -> ChatAgent:
     dependencies=[Depends(enforce_chat_rate_limit)],
 )
 async def chat(
-    body: ChatRequest, agent: Annotated[ChatAgent, Depends(get_chat_agent)]
+    body: ChatRequest, agent: Annotated[Agent, Depends(get_chat_agent)]
 ) -> AsyncIterable[ServerSentEvent]:
     """Stream the agent's answer to one question."""
     session_id = body.session_id or uuid.uuid4().hex

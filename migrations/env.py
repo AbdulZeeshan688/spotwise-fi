@@ -9,7 +9,11 @@ from spotwise.config import get_settings
 from spotwise.db.models import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# A caller (e.g. the eval loader) may pass another database in config.attributes
+# "%" must be doubled: alembic's config parser treats it as interpolation (URL-encoded
+# characters and passwords with % would otherwise crash)
+database_url = config.attributes.get("database_url") or get_settings().database_url
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

@@ -2,10 +2,13 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
+from sqlalchemy.orm import Session
 
+from spotwise.quality.report import run_quality_checks
 from spotwise.tools import price_tools as t
 from spotwise.tools.price_tools import ToolContext
 from tests.quality.helpers import at
+from tests.tools.conftest import NOW
 
 pytestmark = pytest.mark.db
 
@@ -69,7 +72,7 @@ def test_window_without_data_explains_publication(ctx: ToolContext) -> None:
 
 
 def test_stats_with_negative_prices_get_no_vat(ctx: ToolContext) -> None:
-    out = t.get_price_stats(ctx, t.RangeInput(**rng("2025-11-02T00:00", "2025-11-03T00:00")))
+    out = t.get_price_stats(ctx, t.StatsInput(**rng("2025-11-02T00:00", "2025-11-03T00:00")))
     assert out.available
     assert out.min_price_c_kwh == Decimal("-2.000")  # -20 €/MWh, no VAT on negatives
     assert out.min_at is not None and out.min_at.isoformat() == "2025-11-02T03:00:00+02:00"
@@ -79,7 +82,7 @@ def test_stats_with_negative_prices_get_no_vat(ctx: ToolContext) -> None:
 
 
 def test_naive_datetimes_mean_helsinki_time(ctx: ToolContext) -> None:
-    inp = t.RangeInput(start="2025-11-02T03:00", end="2025-11-02T03:30")  # type: ignore[arg-type]
+    inp = t.StatsInput(start="2025-11-02T03:00", end="2025-11-02T03:30")  # type: ignore[arg-type]
     out = t.get_price_stats(ctx, inp)
     assert out.start.isoformat() == "2025-11-02T03:00:00+02:00"
     assert out.max_price_c_kwh == Decimal("-2.000")
@@ -125,6 +128,10 @@ def test_availability(ctx: ToolContext) -> None:
     assert "14:00" in later.note
     assert later.latest_price_end is not None
     assert later.latest_price_end.isoformat() == "2025-11-03T00:00:00+02:00"
+    assert later.earliest_price_start is not None
+    assert later.earliest_price_start.isoformat() == "2025-11-01T00:00:00+02:00"
+    old = t.check_data_availability(ctx, t.AvailabilityInput(day=date(2020, 1, 1)))
+    assert not old.published and "No prices stored" in old.note
 
 
 def test_bad_ranges_are_rejected() -> None:
@@ -134,3 +141,32 @@ def test_bad_ranges_are_rejected() -> None:
         t.RangeInput(**rng("2025-01-01T00:00", "2025-12-01T00:00"))
     with pytest.raises(ValueError):
         t.WindowInput(**rng("2025-11-01T00:00", "2025-11-02T00:00", duration_minutes=5))
+
+
+def test_hours_above_threshold(ctx: ToolContext) -> None:
+    out = t.get_price_stats(
+        ctx, t.StatsInput(**rng("2025-11-01T00:00", "2025-11-02T00:00", threshold_c_kwh="12"))
+    )
+    # Everything except the 3-hour cheap night is above 12 c/kWh (12.55 and 37.65)
+    assert out.hours_above_threshold == Decimal("21")
+    assert out.slot_minutes == 15
+
+
+def test_daily_averages(ctx: ToolContext) -> None:
+    out = t.get_daily_averages(ctx, t.RangeInput(**rng("2025-11-01T00:00", "2025-11-04T00:00")))
+    assert out.available
+    assert [d.day for d in out.days] == [date(2025, 11, 1), date(2025, 11, 2)]
+    assert all(d.complete for d in out.days)
+    assert out.cheapest_day is not None and out.cheapest_day.day == date(2025, 11, 2)
+    assert out.most_expensive_day is not None and out.most_expensive_day.day == date(2025, 11, 1)
+    assert not out.coverage.complete  # 2025-11-03 has no data
+
+
+def test_data_quality_tool(ctx: ToolContext, db_session: Session) -> None:
+    assert t.get_data_quality(ctx, t.NoInput()).overall == "unknown"
+    run_quality_checks(db_session, "FI", ctx.tz, now=NOW, days_back=0)
+    out = t.get_data_quality(ctx, t.NoInput())
+    assert out.available
+    assert out.overall == "green"
+    assert date(2025, 11, 1) in out.days_checked
+    assert all(issue.status != "pass" for issue in out.issues)
