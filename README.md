@@ -5,7 +5,7 @@ day-ahead prices every day, checks the data for problems, and answers questions 
 *"When is the cheapest 3-hour window to charge my car tomorrow?"*. Every number in an
 answer comes from tested code, never from a guess.
 
-**Live demo:** _add your Netlify URL here after deploying (see [docs/DEPLOY.md](docs/DEPLOY.md))_
+**Live demo:** https://spotwise-fi.netlify.app (the free API sleeps when idle, so the first visit can take 30–60 s)
 
 <!-- Add a 20–30 s screen recording here: docs/demo.gif -->
 <!-- ![SpotWise demo](docs/demo.gif) -->
